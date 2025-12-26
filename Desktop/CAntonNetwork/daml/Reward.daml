@@ -1,0 +1,160 @@
+-- Reward.daml
+-- Reward catalog and management for businesses
+
+module Reward where
+
+import DA.Text qualified as T
+
+-- Reward item in the catalog
+template Reward
+  with
+    business : Party
+    rewardId : Text
+    name : Text
+    description : Text
+    tokenCost : Int
+    category : RewardCategory
+    inventory : Int
+    imageUrl : Optional Text
+    terms : Optional Text
+    validFrom : Time
+    validUntil : Optional Time
+    isActive : Bool
+  where
+    signatory business
+    
+    ensure
+      tokenCost > 0
+      && inventory >= 0
+      && T.length name > 0
+    
+    -- Update reward details
+    choice UpdateReward : ContractId Reward
+      with
+        newName : Optional Text
+        newDescription : Optional Text
+        newTokenCost : Optional Int
+        newInventory : Optional Int
+        newIsActive : Optional Bool
+      controller business
+      do
+        create this with
+          name = fromOptional name newName
+          description = fromOptional description newDescription
+          tokenCost = fromOptional tokenCost newTokenCost
+          inventory = fromOptional inventory newInventory
+          isActive = fromOptional isActive newIsActive
+    
+    -- Decrease inventory when redeemed
+    choice ClaimReward : ContractId Reward
+      with
+        quantity : Int
+      controller business
+      do
+        assertMsg "Quantity must be positive" (quantity > 0)
+        assertMsg "Insufficient inventory" (inventory >= quantity)
+        assertMsg "Reward must be active" isActive
+        
+        create this with
+          inventory = inventory - quantity
+    
+    -- Restock inventory
+    choice RestockReward : ContractId Reward
+      with
+        additionalQuantity : Int
+      controller business
+      do
+        assertMsg "Quantity must be positive" (additionalQuantity > 0)
+        create this with
+          inventory = inventory + additionalQuantity
+    
+    -- Deactivate reward
+    choice DeactivateReward : ContractId Reward
+      controller business
+      do
+        create this with isActive = False
+    
+    -- Activate reward
+    choice ActivateReward : ContractId Reward
+      controller business
+      do
+        create this with isActive = True
+
+-- Reward categories
+data RewardCategory
+  = FoodDrink
+  | Discount
+  | FreeItem
+  | Experience
+  | Merchandise
+  | ServiceUpgrade
+  | Other Text
+  deriving (Eq, Show)
+
+-- Reward redemption proposal (customer initiates)
+template RewardRedemptionProposal
+  with
+    business : Party
+    customer : Party
+    rewardCid : ContractId Reward
+    rewardId : Text
+    rewardName : Text
+    tokenCost : Int
+    proposedAt : Time
+  where
+    signatory customer
+    observer business
+    
+    -- Business accepts redemption
+    choice AcceptRedemption : (ContractId Reward, ContractId RedemptionReceipt)
+      controller business
+      do
+        reward <- fetch rewardCid
+        
+        assertMsg "Reward not found" (reward.rewardId == rewardId)
+        assertMsg "Reward not active" reward.isActive
+        assertMsg "Out of stock" (reward.inventory > 0)
+        
+        -- Update inventory
+        newRewardCid <- exercise rewardCid ClaimReward with quantity = 1
+        
+        -- Create receipt
+        receiptCid <- create RedemptionReceipt with
+          business
+          customer
+          programName = "Loyalty Program"
+          rewardId
+          rewardName
+          tokensCost = tokenCost
+          isUsed = False
+        
+        return (newRewardCid, receiptCid)
+    
+    -- Business rejects redemption
+    choice RejectRedemption : ()
+      with
+        reason : Text
+      controller business
+      do
+        return ()
+
+-- Redemption receipt (imported from LoyaltyToken module)
+template RedemptionReceipt
+  with
+    business : Party
+    customer : Party
+    programName : Text
+    rewardId : Text
+    rewardName : Text
+    tokensCost : Int
+    isUsed : Bool
+  where
+    signatory business, customer
+    
+    ensure tokensCost > 0
+
+-- Helper functions
+fromOptional : a -> Optional a -> a
+fromOptional defaultValue opt = case opt of
+  None -> defaultValue
+  Some x -> x

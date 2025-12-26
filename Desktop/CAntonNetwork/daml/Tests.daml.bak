@@ -1,0 +1,331 @@
+-- Tests.daml
+-- Unit tests for all contract templates
+
+module Tests where
+
+import Daml.Script
+import DA.Time
+import DA.Assert
+
+import BusinessProfile
+import LoyaltyToken
+import Reward
+
+-- Test business profile creation
+testBusinessProfileCreation : Script ()
+testBusinessProfileCreation = script do
+  business <- allocateParty "TestBusiness"
+  now <- getTime
+  
+  profileCid <- submit business do
+    createCmd BusinessProfile with
+      businessId = business
+      businessName = "Test Shop"
+      category = CoffeeShop
+      location = "Test Location"
+      email = "test@test.com"
+      phone = "+1-555-0100"
+      createdAt = now
+      isActive = True
+  
+  profile <- submit business do queryContractId business profileCid
+  profile.businessName === "Test Shop"
+  profile.isActive === True
+
+-- Test loyalty program creation
+testLoyaltyProgramCreation : Script ()
+testLoyaltyProgramCreation = script do
+  business <- allocateParty "TestBusiness"
+  now <- getTime
+  
+  profileCid <- submit business do
+    createCmd BusinessProfile with
+      businessId = business
+      businessName = "Test Shop"
+      category = CoffeeShop
+      location = "Test Location"
+      email = "test@test.com"
+      phone = "+1-555-0100"
+      createdAt = now
+      isActive = True
+  
+  (programCid, _) <- submit business do
+    exerciseCmd profileCid CreateLoyaltyProgram with
+      programName = "Test Program"
+      tokenName = "Test Points"
+      tokenSymbol = "TP"
+      description = "Test description"
+  
+  program <- submit business do queryContractId business programCid
+  program.programName === "Test Program"
+  program.totalIssued === 0
+
+-- Test token issuance
+testTokenIssuance : Script ()
+testTokenIssuance = script do
+  business <- allocateParty "TestBusiness"
+  customer <- allocateParty "TestCustomer"
+  now <- getTime
+  
+  profileCid <- submit business do
+    createCmd BusinessProfile with
+      businessId = business
+      businessName = "Test Shop"
+      category = CoffeeShop
+      location = "Test Location"
+      email = "test@test.com"
+      phone = "+1-555-0100"
+      createdAt = now
+      isActive = True
+  
+  (programCid, _) <- submit business do
+    exerciseCmd profileCid CreateLoyaltyProgram with
+      programName = "Test Program"
+      tokenName = "Test Points"
+      tokenSymbol = "TP"
+      description = "Test description"
+  
+  (newProgramCid, tokenCid) <- submit business do
+    exerciseCmd programCid IssueTokens with
+      customer
+      amount = 10
+      reason = "Test issuance"
+  
+  token <- submit customer do queryContractId customer tokenCid
+  token.balance === 10
+  token.customer === customer
+  
+  program <- submit business do queryContractId business newProgramCid
+  program.totalIssued === 10
+
+-- Test token transfer
+testTokenTransfer : Script ()
+testTokenTransfer = script do
+  business <- allocateParty "TestBusiness"
+  alice <- allocateParty "Alice"
+  bob <- allocateParty "Bob"
+  now <- getTime
+  
+  -- Setup
+  profileCid <- submit business do
+    createCmd BusinessProfile with
+      businessId = business
+      businessName = "Test Shop"
+      category = CoffeeShop
+      location = "Test Location"
+      email = "test@test.com"
+      phone = "+1-555-0100"
+      createdAt = now
+      isActive = True
+  
+  (programCid, _) <- submit business do
+    exerciseCmd profileCid CreateLoyaltyProgram with
+      programName = "Test Program"
+      tokenName = "Test Points"
+      tokenSymbol = "TP"
+      description = "Test description"
+  
+  (_, aliceTokenCid) <- submit business do
+    exerciseCmd programCid IssueTokens with
+      customer = alice
+      amount = 10
+      reason = "Test"
+  
+  -- Transfer
+  (aliceNewTokenCid, bobTokenCid) <- submit alice do
+    exerciseCmd aliceTokenCid TransferTokens with
+      recipient = bob
+      amount = 3
+  
+  aliceToken <- submit alice do queryContractId alice aliceNewTokenCid
+  aliceToken.balance === 7
+  
+  bobToken <- submit bob do queryContractId bob bobTokenCid
+  bobToken.balance === 3
+
+-- Test token redemption
+testTokenRedemption : Script ()
+testTokenRedemption = script do
+  business <- allocateParty "TestBusiness"
+  customer <- allocateParty "TestCustomer"
+  now <- getTime
+  
+  -- Setup
+  profileCid <- submit business do
+    createCmd BusinessProfile with
+      businessId = business
+      businessName = "Test Shop"
+      category = CoffeeShop
+      location = "Test Location"
+      email = "test@test.com"
+      phone = "+1-555-0100"
+      createdAt = now
+      isActive = True
+  
+  (programCid, _) <- submit business do
+    exerciseCmd profileCid CreateLoyaltyProgram with
+      programName = "Test Program"
+      tokenName = "Test Points"
+      tokenSymbol = "TP"
+      description = "Test description"
+  
+  (_, tokenCid) <- submit business do
+    exerciseCmd programCid IssueTokens with
+      customer
+      amount = 10
+      reason = "Test"
+  
+  -- Redeem
+  (newTokenCid, receiptCid) <- submit customer do
+    exerciseCmd tokenCid RedeemTokens with
+      rewardId = "test-reward-001"
+      rewardName = "Test Reward"
+      cost = 5
+  
+  token <- submit customer do queryContractId customer newTokenCid
+  token.balance === 5
+  
+  receipt <- submit customer do queryContractId customer receiptCid
+  receipt.tokensCost === 5
+  receipt.isUsed === False
+
+-- Test reward creation and management
+testRewardManagement : Script ()
+testRewardManagement = script do
+  business <- allocateParty "TestBusiness"
+  now <- getTime
+  
+  rewardCid <- submit business do
+    createCmd Reward with
+      business
+      rewardId = "test-reward-001"
+      name = "Test Reward"
+      description = "Test description"
+      tokenCost = 10
+      category = FreeItem
+      inventory = 50
+      imageUrl = None
+      terms = None
+      validFrom = now
+      validUntil = None
+      isActive = True
+  
+  -- Claim reward (decrease inventory)
+  newRewardCid <- submit business do
+    exerciseCmd rewardCid ClaimReward with quantity = 1
+  
+  reward <- submit business do queryContractId business newRewardCid
+  reward.inventory === 49
+  
+  -- Restock
+  restockedRewardCid <- submit business do
+    exerciseCmd newRewardCid RestockReward with additionalQuantity = 10
+  
+  restockedReward <- submit business do queryContractId business restockedRewardCid
+  restockedReward.inventory === 59
+
+-- Test insufficient balance
+testInsufficientBalance : Script ()
+testInsufficientBalance = script do
+  business <- allocateParty "TestBusiness"
+  customer <- allocateParty "TestCustomer"
+  now <- getTime
+  
+  -- Setup
+  profileCid <- submit business do
+    createCmd BusinessProfile with
+      businessId = business
+      businessName = "Test Shop"
+      category = CoffeeShop
+      location = "Test Location"
+      email = "test@test.com"
+      phone = "+1-555-0100"
+      createdAt = now
+      isActive = True
+  
+  (programCid, _) <- submit business do
+    exerciseCmd profileCid CreateLoyaltyProgram with
+      programName = "Test Program"
+      tokenName = "Test Points"
+      tokenSymbol = "TP"
+      description = "Test description"
+  
+  (_, tokenCid) <- submit business do
+    exerciseCmd programCid IssueTokens with
+      customer
+      amount = 5
+      reason = "Test"
+  
+  -- Try to redeem more than balance
+  submitMustFail customer do
+    exerciseCmd tokenCid RedeemTokens with
+      rewardId = "test-reward-001"
+      rewardName = "Test Reward"
+      cost = 10
+
+-- Test locked tokens
+testLockedTokens : Script ()
+testLockedTokens = script do
+  business <- allocateParty "TestBusiness"
+  alice <- allocateParty "Alice"
+  bob <- allocateParty "Bob"
+  now <- getTime
+  
+  -- Setup
+  profileCid <- submit business do
+    createCmd BusinessProfile with
+      businessId = business
+      businessName = "Test Shop"
+      category = CoffeeShop
+      location = "Test Location"
+      email = "test@test.com"
+      phone = "+1-555-0100"
+      createdAt = now
+      isActive = True
+  
+  (programCid, _) <- submit business do
+    exerciseCmd profileCid CreateLoyaltyProgram with
+      programName = "Test Program"
+      tokenName = "Test Points"
+      tokenSymbol = "TP"
+      description = "Test description"
+  
+  (_, tokenCid) <- submit business do
+    exerciseCmd programCid IssueTokens with
+      customer = alice
+      amount = 10
+      reason = "Test"
+  
+  -- Lock tokens
+  lockedTokenCid <- submit business do
+    exerciseCmd tokenCid LockTokens
+  
+  -- Try to transfer locked tokens (should fail)
+  submitMustFail alice do
+    exerciseCmd lockedTokenCid TransferTokens with
+      recipient = bob
+      amount = 5
+  
+  -- Unlock and transfer
+  unlockedTokenCid <- submit business do
+    exerciseCmd lockedTokenCid UnlockTokens
+  
+  (_, _) <- submit alice do
+    exerciseCmd unlockedTokenCid TransferTokens with
+      recipient = bob
+      amount = 5
+  
+  return ()
+
+-- Run all tests
+runAllTests : Script ()
+runAllTests = script do
+  testBusinessProfileCreation
+  testLoyaltyProgramCreation
+  testTokenIssuance
+  testTokenTransfer
+  testTokenRedemption
+  testRewardManagement
+  testInsufficientBalance
+  testLockedTokens
+  debug "All tests passed!"

@@ -1,0 +1,157 @@
+-- BusinessProfile.daml
+-- Represents a business entity that can create loyalty programs
+
+module BusinessProfile where
+
+import DA.Time
+import DA.Text qualified as T
+import LoyaltyToken
+
+-- Business registration and profile
+template BusinessProfile
+  with
+    businessId : Party
+    businessName : Text
+    category : BusinessCategory
+    location : Text
+    email : Text
+    phone : Text
+    createdAt : Time
+    isActive : Bool
+  where
+    signatory businessId
+    
+    ensure
+      T.length businessName > 0
+      && T.length location > 0
+      && isValidEmail email
+    
+    -- Create a new loyalty program
+    choice CreateLoyaltyProgram : ContractId LoyaltyProgram
+      with
+        programName : Text
+        tokenName : Text
+        tokenSymbol : Text
+        description : Text
+      controller businessId
+      do
+        assertMsg "Program name cannot be empty" (T.length programName > 0)
+        assertMsg "Token name cannot be empty" (T.length tokenName > 0)
+        create LoyaltyProgram with
+          business = businessId
+          programName
+          tokenName
+          tokenSymbol
+          description
+          totalIssued = 0
+          totalRedeemed = 0
+          isActive = True
+    
+    -- Update business profile
+    choice UpdateProfile : ContractId BusinessProfile
+      with
+        newLocation : Optional Text
+        newPhone : Optional Text
+        newIsActive : Optional Bool
+      controller businessId
+      do
+        create this with
+          location = fromOptional location newLocation
+          phone = fromOptional phone newPhone
+          isActive = fromOptional isActive newIsActive
+    
+    -- Deactivate business
+    choice DeactivateBusiness : ContractId BusinessProfile
+      controller businessId
+      do
+        create this with isActive = False
+
+-- Business categories
+data BusinessCategory
+  = CoffeeShop
+  | Restaurant
+  | Gym
+  | Salon
+  | RetailStore
+  | Other Text
+  deriving (Eq, Show)
+
+-- Loyalty program configuration
+template LoyaltyProgram
+  with
+    business : Party
+    programName : Text
+    tokenName : Text
+    tokenSymbol : Text
+    description : Text
+    totalIssued : Int
+    totalRedeemed : Int
+    isActive : Bool
+  where
+    signatory business
+    
+    ensure
+      totalIssued >= 0
+      && totalRedeemed >= 0
+      && totalRedeemed <= totalIssued
+    
+    -- Issue tokens to a customer
+    choice IssueTokens : (ContractId LoyaltyProgram, ContractId LoyaltyToken)
+      with
+        customer : Party
+        amount : Int
+        reason : Text
+      controller business
+      do
+        assertMsg "Amount must be positive" (amount > 0)
+        assertMsg "Program must be active" isActive
+        
+        tokenCid <- create LoyaltyToken with
+          business
+          customer
+          programName
+          tokenName
+          tokenSymbol
+          balance = amount
+          isLocked = False
+        
+        programCid <- create this with
+          totalIssued = totalIssued + amount
+        
+        return (programCid, tokenCid)
+    
+    -- Record token redemption
+    choice RecordRedemption : ContractId LoyaltyProgram
+      with
+        amount : Int
+      controller business
+      do
+        assertMsg "Amount must be positive" (amount > 0)
+        create this with
+          totalRedeemed = totalRedeemed + amount
+    
+    -- Update program details
+    choice UpdateProgram : ContractId LoyaltyProgram
+      with
+        newDescription : Optional Text
+        newIsActive : Optional Bool
+      controller business
+      do
+        create this with
+          description = fromOptional description newDescription
+          isActive = fromOptional isActive newIsActive
+    
+    -- Deactivate program
+    choice DeactivateProgram : ContractId LoyaltyProgram
+      controller business
+      do
+        create this with isActive = False
+
+-- Helper functions
+isValidEmail : Text -> Bool
+isValidEmail email = T.isInfixOf "@" email && T.isInfixOf "." email
+
+fromOptional : a -> Optional a -> a
+fromOptional defaultValue opt = case opt of
+  None -> defaultValue
+  Some x -> x

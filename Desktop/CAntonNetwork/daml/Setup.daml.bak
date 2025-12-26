@@ -1,0 +1,166 @@
+-- Setup.daml
+-- Initialization and setup script for testing
+
+module Setup where
+
+import Daml.Script
+import DA.Time
+
+import BusinessProfile
+import LoyaltyToken
+import Reward
+
+-- Setup script for testing
+setup : Script ()
+setup = script do
+  -- Allocate parties
+  alice <- allocateParty "Alice"
+  bob <- allocateParty "Bob"
+  coffeeShop <- allocateParty "JoesCoffee"
+  gymOwner <- allocateParty "FitGym"
+  
+  -- Get current time
+  now <- getTime
+  
+  -- Create business profiles
+  coffeeProfileCid <- submit coffeeShop do
+    createCmd BusinessProfile with
+      businessId = coffeeShop
+      businessName = "Joe's Coffee Shop"
+      category = CoffeeShop
+      location = "123 Main St, San Francisco, CA"
+      email = "joe@joescoffee.com"
+      phone = "+1-415-555-0100"
+      createdAt = now
+      isActive = True
+  
+  gymProfileCid <- submit gymOwner do
+    createCmd BusinessProfile with
+      businessId = gymOwner
+      businessName = "FitLife Gym"
+      category = Gym
+      location = "456 Fitness Ave, San Francisco, CA"
+      email = "info@fitlifegym.com"
+      phone = "+1-415-555-0200"
+      createdAt = now
+      isActive = True
+  
+  -- Create loyalty programs
+  coffeeProgramCid <- submit coffeeShop do
+    exerciseCmd coffeeProfileCid CreateLoyaltyProgram with
+      programName = "Coffee Rewards"
+      tokenName = "Joe's Coffee Points"
+      tokenSymbol = "JCP"
+      description = "Earn points with every purchase. 10 points = free coffee!"
+  
+  gymProgramCid <- submit gymOwner do
+    exerciseCmd gymProfileCid CreateLoyaltyProgram with
+      programName = "Gym Loyalty"
+      tokenName = "FitLife Points"
+      tokenSymbol = "FLP"
+      description = "Earn points for check-ins. Redeem for free classes and merchandise!"
+  
+  -- Issue tokens to customers
+  (coffeeProgramCid2, aliceCoffeeTokenCid) <- submit coffeeShop do
+    exerciseCmd coffeeProgramCid IssueTokens with
+      customer = alice
+      amount = 5
+      reason = "Welcome bonus"
+  
+  (coffeeProgramCid3, bobCoffeeTokenCid) <- submit coffeeShop do
+    exerciseCmd coffeeProgramCid2 IssueTokens with
+      customer = bob
+      amount = 3
+      reason = "First purchase"
+  
+  (_, aliceGymTokenCid) <- submit gymOwner do
+    exerciseCmd gymProgramCid IssueTokens with
+      customer = alice
+      amount = 10
+      reason = "Monthly check-ins"
+  
+  -- Create reward catalog for coffee shop
+  coffeeRewardCid <- submit coffeeShop do
+    createCmd Reward with
+      business = coffeeShop
+      rewardId = "free-coffee-001"
+      name = "Free Regular Coffee"
+      description = "Any size regular coffee, hot or iced"
+      tokenCost = 10
+      category = FreeItem
+      inventory = 100
+      imageUrl = Some "https://example.com/coffee.jpg"
+      terms = Some "Valid for regular coffee only. Upgrades extra."
+      validFrom = now
+      validUntil = None
+      isActive = True
+  
+  pastryRewardCid <- submit coffeeShop do
+    createCmd Reward with
+      business = coffeeShop
+      rewardId = "pastry-001"
+      name = "Free Pastry"
+      description = "Choice of croissant, muffin, or cookie"
+      tokenCost = 5
+      category = FreeItem
+      inventory = 50
+      imageUrl = Some "https://example.com/pastry.jpg"
+      terms = None
+      validFrom = now
+      validUntil = None
+      isActive = True
+  
+  -- Create reward catalog for gym
+  gymClassRewardCid <- submit gymOwner do
+    createCmd Reward with
+      business = gymOwner
+      rewardId = "free-class-001"
+      name = "Free Yoga Class"
+      description = "One complimentary yoga class"
+      tokenCost = 20
+      category = Experience
+      inventory = 30
+      imageUrl = Some "https://example.com/yoga.jpg"
+      terms = Some "Must book in advance. Subject to availability."
+      validFrom = now
+      validUntil = None
+      isActive = True
+  
+  tshirtRewardCid <- submit gymOwner do
+    createCmd Reward with
+      business = gymOwner
+      rewardId = "tshirt-001"
+      name = "FitLife T-Shirt"
+      description = "Official FitLife branded t-shirt"
+      tokenCost = 50
+      category = Merchandise
+      inventory = 20
+      imageUrl = Some "https://example.com/tshirt.jpg"
+      terms = Some "Subject to size availability"
+      validFrom = now
+      validUntil = None
+      isActive = True
+  
+  -- Test token transfer
+  (aliceNewTokenCid, bobReceivedTokenCid) <- submit alice do
+    exerciseCmd aliceCoffeeTokenCid TransferTokens with
+      recipient = bob
+      amount = 2
+  
+  -- Test redemption
+  (aliceRemainingTokenCid, receiptCid) <- submit alice do
+    exerciseCmd aliceNewTokenCid RedeemTokens with
+      rewardId = "pastry-001"
+      rewardName = "Free Pastry"
+      cost = 3
+  
+  -- Mark receipt as used
+  usedReceiptCid <- submit coffeeShop do
+    exerciseCmd receiptCid MarkAsUsed
+  
+  debug "Setup complete!"
+  debug $ "Alice coffee tokens: " <> show aliceRemainingTokenCid
+  debug $ "Bob coffee tokens: " <> show bobReceivedTokenCid
+  debug $ "Alice gym tokens: " <> show aliceGymTokenCid
+  
+  return ()

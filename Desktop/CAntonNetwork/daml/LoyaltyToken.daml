@@ -1,0 +1,177 @@
+-- LoyaltyToken.daml
+-- Represents customer loyalty tokens that can be earned, transferred, and redeemed
+
+module LoyaltyToken where
+
+import DA.Text qualified as T
+
+-- Customer loyalty token balance
+template LoyaltyToken
+  with
+    business : Party
+    customer : Party
+    programName : Text
+    tokenName : Text
+    tokenSymbol : Text
+    balance : Int
+    isLocked : Bool
+  where
+    signatory business, customer
+    
+    ensure
+      balance >= 0
+      && T.length tokenName > 0
+    
+    -- Transfer tokens to another customer
+    choice TransferTokens : (ContractId LoyaltyToken, ContractId LoyaltyToken)
+      with
+        recipient : Party
+        amount : Int
+      controller customer
+      do
+        assertMsg "Amount must be positive" (amount > 0)
+        assertMsg "Insufficient balance" (balance >= amount)
+        assertMsg "Tokens must not be locked" (not isLocked)
+        
+        -- Create recipient's token contract
+        recipientCid <- create LoyaltyToken with
+          business
+          customer = recipient
+          programName
+          tokenName
+          tokenSymbol
+          balance = amount
+          isLocked = False
+        
+        -- Update sender's balance
+        senderCid <- create this with
+          balance = balance - amount
+        
+        return (senderCid, recipientCid)
+    
+    -- Merge with another token contract (same business)
+    choice MergeTokens : ContractId LoyaltyToken
+      with
+        otherTokenCid : ContractId LoyaltyToken
+      controller customer
+      do
+        otherToken <- fetch otherTokenCid
+        assertMsg "Tokens must be from same business" (otherToken.business == business)
+        assertMsg "Tokens must be owned by same customer" (otherToken.customer == customer)
+        
+        exercise otherTokenCid Archive
+        create this with
+          balance = balance + otherToken.balance
+    
+    -- Redeem tokens for a reward
+    choice RedeemTokens : (ContractId LoyaltyToken, ContractId RedemptionReceipt)
+      with
+        rewardId : Text
+        rewardName : Text
+        cost : Int
+      controller customer
+      do
+        assertMsg "Cost must be positive" (cost > 0)
+        assertMsg "Insufficient balance" (balance >= cost)
+        assertMsg "Tokens must not be locked" (not isLocked)
+        
+        -- Create redemption receipt
+        receiptCid <- create RedemptionReceipt with
+          business
+          customer
+          programName
+          rewardId
+          rewardName
+          tokensCost = cost
+          isUsed = False
+        
+        -- Update balance
+        tokenCid <- create this with
+          balance = balance - cost
+        
+        return (tokenCid, receiptCid)
+    
+    -- Lock tokens (prevent transfers/redemptions)
+    choice LockTokens : ContractId LoyaltyToken
+      controller business
+      do
+        create this with isLocked = True
+    
+    -- Unlock tokens
+    choice UnlockTokens : ContractId LoyaltyToken
+      controller business
+      do
+        create this with isLocked = False
+    
+    -- Burn tokens (remove from circulation)
+    choice BurnTokens : Optional (ContractId LoyaltyToken)
+      with
+        amount : Int
+      controller customer
+      do
+        assertMsg "Amount must be positive" (amount > 0)
+        assertMsg "Insufficient balance" (balance >= amount)
+        
+        if balance == amount then
+          return None
+        else do
+          tokenCid <- create this with balance = balance - amount
+          return (Some tokenCid)
+
+-- Redemption receipt for tracking reward claims
+template RedemptionReceipt
+  with
+    business : Party
+    customer : Party
+    programName : Text
+    rewardId : Text
+    rewardName : Text
+    tokensCost : Int
+    isUsed : Bool
+  where
+    signatory business, customer
+    
+    ensure tokensCost > 0
+    
+    -- Mark receipt as used
+    choice MarkAsUsed : ContractId RedemptionReceipt
+      controller business
+      do
+        assertMsg "Receipt already used" (not isUsed)
+        create this with isUsed = True
+    
+    -- Cancel redemption (refund tokens)
+    choice CancelRedemption : ContractId LoyaltyToken
+      controller business
+      do
+        assertMsg "Receipt already used" (not isUsed)
+        create LoyaltyToken with
+          business
+          customer
+          programName
+          tokenName = programName <> " Points"
+          tokenSymbol = "PTS"
+          balance = tokensCost
+          isLocked = False
+
+-- Token transaction history (optional, for analytics)
+template TokenTransaction
+  with
+    business : Party
+    customer : Party
+    transactionType : TransactionType
+    amount : Int
+    timestamp : Time
+    description : Text
+  where
+    signatory business, customer
+    
+    ensure amount > 0
+
+data TransactionType
+  = Earned
+  | Redeemed
+  | Transferred
+  | Received
+  | Burned
+  deriving (Eq, Show)

@@ -1,0 +1,34 @@
+{
+  "name": "canton-loyalty",
+  "version": "1.0.0",
+  "description": "Community Token Loyalty/Rewards App on Canton Network",
+  "private": true,
+  "workspaces": [
+    "business-dashboard",
+    "customer-app"
+  ],
+  "scripts": {
+    "install:all": "npm install && cd business-dashboard && npm install && cd ../customer-app && npm install",
+    "dev:daml": "cd daml && daml start",
+    "dev:business": "cd business-dashboard && npm run dev",
+    "dev:customer": "cd customer-app && npm start",
+    "build:daml": "cd daml && daml build",
+    "build:business": "cd business-dashboard && npm run build",
+    "build:customer": "cd customer-app && npm run build",
+    "test:daml": "cd daml && daml test",
+    "test:business": "cd business-dashboard && npm test",
+    "test:customer": "cd customer-app && npm test",
+    "deploy:daml": "cd daml && daml ledger upload-dar canton-loyalty.dar",
+    "clean": "rm -rf node_modules business-dashboard/node_modules customer-app/node_modules .next build dist"
+  },
+  "keywords": [
+    "canton",
+    "daml",
+    "loyalty",
+    "rewards",
+    "blockchain",
+    "web3"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
+}
